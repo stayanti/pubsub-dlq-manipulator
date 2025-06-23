@@ -20,7 +20,8 @@ func (p *DefaultMessageProcessor) ProcessMessage(ctx context.Context, msg *pubsu
 		return err
 	}
 
-	messageData.Path = strings.Replace(messageData.Path, "profilecms.io", "profilecms.com", 1)
+	// Create your custom logic here
+    // messageData.Path = strings.Replace(messageData.Path, "profilecms.io", "profilecms.com", 1)
 
 	newData, err := json.Marshal(messageData)
 	if err != nil {

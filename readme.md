@@ -1,3 +1,8 @@
+# TLDR   
+
+go run main.go
+
+
 # DLQ Message Processor
 
 This tool is designed for manual processing of Google Cloud Pub/Sub Dead Letter Queues (DLQs). It provides a command-line interface to handle messages that cannot be processed successfully after a certain number of attempts.
