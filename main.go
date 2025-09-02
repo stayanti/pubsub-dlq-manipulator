@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub"
-	"encoding/json"
 )
 
 type processingMode int
@@ -44,6 +43,7 @@ type config struct {
 	messageLimit       int
 	previewOnly        bool
 	processor          MessageProcessor
+	parallelProcessing bool
 }
 
 type Message struct {
@@ -116,6 +116,7 @@ func getConfigFromUser() config {
 		cfg.mode = acknowledgeOnly
 	case "4":
 		cfg.mode = customProcess
+		cfg.processor = &DefaultMessageProcessor{}
 	default:
 		log.Fatal("Invalid mode selected")
 	}
@@ -131,6 +132,13 @@ func getConfigFromUser() config {
 	limitStr = strings.TrimSpace(limitStr)
 	cfg.messageLimit, _ = strconv.Atoi(limitStr)
 
+	fmt.Print("\nEnable parallel processing for faster performance? (y/N): ")
+	parallel, _ := reader.ReadString('\n')
+	parallel = strings.TrimSpace(strings.ToLower(parallel))
+	if parallel == "y" || parallel == "yes" {
+		cfg.parallelProcessing = true
+	}
+
 	fmt.Println("\nConfiguration Summary:")
 	fmt.Printf("Source Subscription: %s\n", cfg.sourceSubscription)
 	if !cfg.previewOnly && cfg.destinationTopic != "" {
@@ -138,6 +146,7 @@ func getConfigFromUser() config {
 	}
 	fmt.Printf("Mode: %v\n", getModeString(cfg))
 	fmt.Printf("Message Limit: %d\n", cfg.messageLimit)
+	fmt.Printf("Parallel Processing: %v\n", cfg.parallelProcessing)
 	fmt.Println("Using default credentials")
 
 	fmt.Print("\nProceed with these settings? (y/N): ")
@@ -247,8 +256,10 @@ func processMessages(ctx context.Context, subscription *pubsub.Subscription, des
 	defer cancel()
 
 	// Set max outstanding messages to 1 to process sequentially
-	subscription.ReceiveSettings.MaxOutstandingMessages = 1
-	subscription.ReceiveSettings.NumGoroutines = 1
+	if !cfg.parallelProcessing {
+		subscription.ReceiveSettings.MaxOutstandingMessages = 1
+		subscription.ReceiveSettings.NumGoroutines = 1
+	}
 
 	err := subscription.Receive(cctx, func(ctx context.Context, msg *pubsub.Message) {
 		mu.Lock()
@@ -266,7 +277,14 @@ func processMessages(ctx context.Context, subscription *pubsub.Subscription, des
 				log.Printf("Acknowledging message without republishing")
 				msg.Ack()
 			case customProcess:
-				processCustomMessage(ctx, msg, destinationTopic)
+				err := cfg.processor.ProcessMessage(ctx, msg, destinationTopic)
+				if err != nil {
+					log.Printf("Failed to process message %s: %v", msg.ID, err)
+					msg.Nack()
+				} else {
+					log.Printf("Successfully processed and published message %s", msg.ID)
+					msg.Ack()
+				}
 			}
 
 			if currentCount >= cfg.messageLimit {
@@ -301,46 +319,6 @@ func republishMessage(ctx context.Context, msg *pubsub.Message, destinationTopic
 	}
 
 	log.Printf("Republished message %s to new ID: %s", msg.ID, id)
-	msg.Ack()
-}
-
-func processCustomMessage(ctx context.Context, msg *pubsub.Message, destinationTopic TopicPublisher) {
-	publishCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	log.Printf("Processing message data: %s", string(msg.Data))
-
-	// Parse the JSON message
-	var messageData Message
-	if err := json.Unmarshal(msg.Data, &messageData); err != nil {
-		log.Printf("Failed to unmarshal message: %v", err)
-		msg.Nack()
-		return
-	}
-
-	// Replace .io with .com in the path
-	messageData.Path = strings.Replace(messageData.Path, "profilecms.io", "profilecms.com", 1)
-
-	// Convert back to JSON
-	newData, err := json.Marshal(messageData)
-	if err != nil {
-		log.Printf("Failed to marshal modified message: %v", err)
-		msg.Nack()
-		return
-	}
-
-	// Publish the processed message
-	id, err := destinationTopic.Publish(publishCtx, &pubsub.Message{
-		Data:       newData,
-		Attributes: msg.Attributes,
-	})
-	if err != nil {
-		log.Printf("Failed to publish message %s: %v", msg.ID, err)
-		msg.Nack()
-		return
-	}
-
-	log.Printf("Successfully published message %s to new ID: %s", msg.ID, id)
 	msg.Ack()
 }
 

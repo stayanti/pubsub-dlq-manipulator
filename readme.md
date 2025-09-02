@@ -1,6 +1,6 @@
 # TLDR   
 
-go run main.go
+go run .
 
 
 # DLQ Message Processor

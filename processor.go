@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 
 	"cloud.google.com/go/pubsub"
@@ -21,7 +20,10 @@ func (p *DefaultMessageProcessor) ProcessMessage(ctx context.Context, msg *pubsu
 	}
 
 	// Create your custom logic here
-    // messageData.Path = strings.Replace(messageData.Path, "profilecms.io", "profilecms.com", 1)
+	if msg.Attributes == nil {
+		msg.Attributes = make(map[string]string)
+	}
+	msg.Attributes["holdingTenantId"] = "??"
 
 	newData, err := json.Marshal(messageData)
 	if err != nil {
